@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Black PNG Flip Book</title>
+    <style>
+        :root {
+            --book-width: 800px;
+            --book-height: 1000px;
+            --speed: 0.6s;
+        }
+
+        body {
+            background-color: #000; /* Screen is black */
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            overflow: hidden;
+            font-family: sans-serif;
+        }
+
+        .book {
+            position: relative;
+            width: var(--book-width);
+            height: var(--book-height);
+            transition: transform var(--speed);
+            transform-style: preserve-3d;
+        }
+
+        .page {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            top: 0;
+            left: 0;
+            transform-origin: left;
+            transform-style: preserve-3d;
+            transition: transform var(--speed);
+        }
+
+        .front, .back {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            top: 0;
+            left: 0;
+            backface-visibility: hidden;
+            background: #000; /* Page is black */
+            box-shadow: inset 3px 0px 20px rgba(255,255,255,0.05); /* Very subtle highlight */
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .back { transform: rotateY(180deg); }
+
+        img {
+            width: 100%;
+            height: 100%;
+            object-fit: contain; 
+            background: #000; /* Image background is black */
+        }
+
+        .controls {
+            margin-top: 50px;
+            display: flex;
+            gap: 20px;
+        }
+
+        button {
+            padding: 12px 25px;
+            font-size: 16px;
+            cursor: pointer;
+            border: 1px solid #333;
+            background: #111;
+            color: white;
+            border-radius: 5px;
+        }
+
+        button:hover { background: #222; }
+        .flipped { transform: rotateY(-180deg); }
+    </style>
+</head>
+<body>
+
+<div class="book" id="book"></div>
+
+<div class="controls">
+    <button id="prevBtn">← Previous</button>
+    <button id="nextBtn">Next →</button>
+</div>
+
+<script>
+    const totalImages = 6; 
+    const folderPath = "images/"; 
+    const extension = ".png"; 
+
+    const book = document.getElementById('book');
+    const prevBtn = document.getElementById('prevBtn');
+    const nextBtn = document.getElementById('nextBtn');
+
+    let currentState = 1;
+    const numOfPapers = Math.ceil(totalImages / 2);
+    const maxState = numOfPapers + 1;
+
+    for (let i = 1; i <= numOfPapers; i++) {
+        const page = document.createElement('div');
+        page.className = 'page';
+        page.id = `p${i}`;
+        page.style.zIndex = numOfPapers - i + 1;
+
+        const fImg = (i * 2) - 1;
+        const bImg = i * 2;
+
+        page.innerHTML = `
+            <div class="front"><img src="${folderPath}${fImg}${extension}" onerror="this.style.opacity='0'"></div>
+            <div class="back"><img src="${folderPath}${bImg}${extension}" onerror="this.style.opacity='0'"></div>
+        `;
+        book.appendChild(page);
+    }
+
+    function goNextPage() {
+        if (currentState < maxState) {
+            const paper = document.getElementById(`p${currentState}`);
+            if (currentState === 1) book.style.transform = "translateX(50%)";
+            paper.classList.add("flipped");
+            paper.style.zIndex = currentState;
+            if (currentState === numOfPapers) book.style.transform = "translateX(100%)";
+            currentState++;
+        }
+    }
+
+    function goPrevPage() {
+        if (currentState > 1) {
+            currentState--;
+            const paper = document.getElementById(`p${currentState}`);
+            if (currentState === 1) book.style.transform = "translateX(0%)";
+            else if (currentState === numOfPapers) book.style.transform = "translateX(50%)";
+            paper.classList.remove("flipped");
+            paper.style.zIndex = numOfPapers - currentState + 1;
+        }
+    }
+
+    nextBtn.addEventListener("click", goNextPage);
+    prevBtn.addEventListener("click", goPrevPage);
+</script>
+
+</body>
+</html>
