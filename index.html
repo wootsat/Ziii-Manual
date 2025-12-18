@@ -1,232 +1,256 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Ziii Manual - Perfect Zoom</title>
-    <style>
-        :root {
-            --book-width: 90vmin; 
-            --speed: 0.6s;
-        }
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Ziii Manual - Sharper Pages</title>
+  <style>
+    :root {
+      --book-width: 90vmin;
+      --speed: 0.6s;
+    }
 
-        body {
-            background-color: #000;
-            margin: 0;
-            padding: 0;
-            width: 100vw;
-            height: 100vh;
-            overflow: hidden;
-            font-family: sans-serif;
-            user-select: none;
-        }
+    body {
+      background: #000;
+      margin: 0;
+      width: 100vw;
+      height: 100vh;
+      overflow: hidden;
+      font-family: sans-serif;
+      user-select: none;
+    }
 
-        /* This container is fixed to the top-left to keep coordinates simple */
-        #viewport {
-            position: absolute;
-            top: 0;
-            left: 0;
-            width: 100%;
-            height: 100%;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-        }
+    #viewport {
+      position: absolute;
+      inset: 0;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+    }
 
-        #drag-wrapper {
-            position: absolute;
-            transform-origin: center center;
-            will-change: transform;
-            cursor: grab;
-            display: flex;
-            justify-content: center;
-            align-items: center;
-        }
+    #drag-wrapper {
+      position: absolute;
+      transform-origin: center center;
+      will-change: transform;
+      cursor: grab;
+      display: flex;
+      justify-content: center;
+      align-items: center;
 
-        #drag-wrapper:active { cursor: grabbing; }
+      /* Helps keep transforms on the GPU consistently */
+      transform: translateZ(0);
+      backface-visibility: hidden;
+    }
+    #drag-wrapper:active { cursor: grabbing; }
 
-        .book {
-            position: relative;
-            width: calc(var(--book-width) / 2);
-            height: calc(var(--book-width) * 0.7); 
-            transition: transform var(--speed);
-            transform-style: preserve-3d;
-            perspective: 3000px;
-        }
+    .book {
+      position: relative;
+      width: calc(var(--book-width) / 2);
+      height: calc(var(--book-width) * 0.7);
+      transition: transform var(--speed);
+      transform-style: preserve-3d;
 
-        .page {
-            position: absolute;
-            width: 100%;
-            height: 100%;
-            top: 0;
-            left: 0;
-            transform-origin: left;
-            transform-style: preserve-3d;
-            transition: transform var(--speed);
-            cursor: pointer;
-        }
+      /* A slightly higher perspective can reduce distortion blur */
+      perspective: 5000px;
 
-        .front, .back {
-            position: absolute;
-            width: 100%;
-            height: 100%;
-            top: 0;
-            left: 0;
-            backface-visibility: hidden;
-            background: transparent; 
-            display: flex;
-            justify-content: center;
-            align-items: center;
-        }
+      /* Prevent text/edges from looking “washed” on some GPUs */
+      backface-visibility: hidden;
+      transform: translateZ(0);
+      will-change: transform;
+    }
 
-        .back { transform: rotateY(180deg); }
+    .page {
+      position: absolute;
+      inset: 0;
+      transform-origin: left;
+      transform-style: preserve-3d;
+      transition: transform var(--speed);
+      cursor: pointer;
 
-        img {
-            width: 100%;
-            height: 100%;
-            object-fit: contain;
-            pointer-events: none;
-        }
+      /* Important: keep each page on its own composited layer */
+      will-change: transform;
+      transform: translateZ(0);
+      backface-visibility: hidden;
+    }
 
-        .flipped { transform: rotateY(-180deg); }
+    .front, .back {
+      position: absolute;
+      inset: 0;
+      backface-visibility: hidden;
+      background: transparent;
+      display: flex;
+      justify-content: center;
+      align-items: center;
 
-        #zoom-info {
-            position: fixed;
-            top: 10px;
-            left: 10px;
-            color: #555;
-            font-size: 12px;
-            pointer-events: none;
-            z-index: 1000;
-        }
-    </style>
+      /* Keep faces crisp while rotating */
+      transform: translateZ(0);
+    }
+
+    .back { transform: rotateY(180deg) translateZ(0); }
+
+    /* The most important “sharpness” knobs */
+    img {
+      width: 100%;
+      height: 100%;
+      object-fit: contain;
+      pointer-events: none;
+
+      /* Prefer high quality scaling */
+      image-rendering: auto;
+      image-rendering: smooth;
+      image-rendering: high-quality;
+      -ms-interpolation-mode: bicubic;
+
+      /* Helps some browsers render crisper during transforms */
+      transform: translateZ(0);
+      backface-visibility: hidden;
+      will-change: transform;
+
+      /* Prevent accidental antialiasing shimmer from tiny subpixel shifts */
+      -webkit-transform-style: preserve-3d;
+      transform-style: preserve-3d;
+    }
+
+    .flipped { transform: rotateY(-180deg) translateZ(0); }
+
+    #zoom-info {
+      position: fixed;
+      top: 10px;
+      left: 10px;
+      color: #777;
+      font-size: 12px;
+      pointer-events: none;
+      z-index: 1000;
+    }
+  </style>
 </head>
 <body>
+  <div id="zoom-info">Scroll: Zoom to Cursor | Drag: Move | Tap: Flip</div>
 
-    <div id="zoom-info">Scroll: Zoom to Cursor | Drag: Move | Tap: Flip</div>
-
-    <div id="viewport">
-        <div id="drag-wrapper">
-            <div class="book" id="book"></div>
-        </div>
+  <div id="viewport">
+    <div id="drag-wrapper">
+      <div class="book" id="book"></div>
     </div>
+  </div>
 
-<script>
-    const totalImages = 10; 
-    const folderPath = "images/"; 
-    const extension = ".jpg"; 
+  <script>
+    const totalImages = 10;
+    const folderPath = "images/";
+    const extension = ".jpg";
 
-    const book = document.getElementById('book');
-    const dragWrapper = document.getElementById('drag-wrapper');
-    
-    // Initial state
+    const book = document.getElementById("book");
+    const dragWrapper = document.getElementById("drag-wrapper");
+
     let scale = 1;
-    let pos = { x: 0, y: 0 }; // Translation offset
+    let pos = { x: 0, y: 0 };
     let isDragging = false;
     let wasDragged = false;
     let startMouse = { x: 0, y: 0 };
 
-    // --- 1. THE ZOOM TO CURSOR MATH ---
-    window.addEventListener('wheel', (e) => {
+    // Zoom to cursor
+    window.addEventListener(
+      "wheel",
+      (e) => {
         e.preventDefault();
 
-        const delta = e.deltaY > 0 ? 0.9 : 1.1; // Zoom factor
+        const delta = e.deltaY > 0 ? 0.9 : 1.1;
         const newScale = Math.min(Math.max(0.1, scale * delta), 6);
 
-        // Calculate mouse position relative to the center of the screen
         const mouseX = e.clientX - window.innerWidth / 2;
         const mouseY = e.clientY - window.innerHeight / 2;
 
-        // Adjust position so the point under the mouse stays in the same place
-        // NewPos = MousePos - (MousePos - OldPos) * (NewScale / OldScale)
         pos.x = mouseX - (mouseX - pos.x) * (newScale / scale);
         pos.y = mouseY - (mouseY - pos.y) * (newScale / scale);
-        
+
         scale = newScale;
         updateTransform();
-    }, { passive: false });
+      },
+      { passive: false }
+    );
 
-    // --- 2. DRAGGING LOGIC ---
-    window.addEventListener('mousedown', (e) => {
-        isDragging = true;
+    // Dragging
+    window.addEventListener("mousedown", (e) => {
+      isDragging = true;
+      wasDragged = false;
+      startMouse = { x: e.clientX - pos.x, y: e.clientY - pos.y };
+    });
+
+    window.addEventListener("mousemove", (e) => {
+      if (!isDragging) return;
+      wasDragged = true;
+      pos.x = e.clientX - startMouse.x;
+      pos.y = e.clientY - startMouse.y;
+      updateTransform();
+    });
+
+    window.addEventListener("mouseup", () => {
+      isDragging = false;
+      setTimeout(() => {
         wasDragged = false;
-        startMouse = { x: e.clientX - pos.x, y: e.clientY - pos.y };
-    });
-
-    window.addEventListener('mousemove', (e) => {
-        if (!isDragging) return;
-        wasDragged = true;
-        pos.x = e.clientX - startMouse.x;
-        pos.y = e.clientY - startMouse.y;
-        updateTransform();
-    });
-
-    window.addEventListener('mouseup', () => {
-        isDragging = false;
-        // Small delay to prevent tap-flip while releasing a drag
-        setTimeout(() => { wasDragged = false; }, 50);
+      }, 50);
     });
 
     function updateTransform() {
-        dragWrapper.style.transform = `translate(${pos.x}px, ${pos.y}px) scale(${scale})`;
+      // translate3d helps keep it on the GPU consistently and reduces “re-raster” blur
+      dragWrapper.style.transform = `translate3d(${pos.x}px, ${pos.y}px, 0) scale(${scale})`;
     }
 
-    // --- 3. PAGE INITIALIZATION ---
+    // Page init
     const numOfPapers = Math.ceil(totalImages / 2);
     let currentState = 1;
     const maxState = numOfPapers + 1;
 
     function init() {
-        for (let i = 1; i <= numOfPapers; i++) {
-            const page = document.createElement('div');
-            page.className = 'page';
-            page.id = `p${i}`;
-            page.style.zIndex = numOfPapers - i + 1;
-            const frontNum = (i - 1) * 2;
-            const backNum = frontNum + 1;
+      for (let i = 1; i <= numOfPapers; i++) {
+        const page = document.createElement("div");
+        page.className = "page";
+        page.id = `p${i}`;
+        page.style.zIndex = numOfPapers - i + 1;
 
-            page.innerHTML = `
-                <div class="front" onclick="handleTap(event, 'next')">
-                    <img src="${folderPath}${frontNum}${extension}" onerror="this.style.opacity='0'">
-                </div>
-                <div class="back" onclick="handleTap(event, 'prev')">
-                    <img src="${folderPath}${backNum}${extension}" onerror="this.style.opacity='0'">
-                </div>
-            `;
-            book.appendChild(page);
-        }
+        const frontNum = (i - 1) * 2;
+        const backNum = frontNum + 1;
+
+        page.innerHTML = `
+          <div class="front" onclick="handleTap(event, 'next')">
+            <img src="${folderPath}${frontNum}${extension}" loading="eager" decoding="sync" onerror="this.style.opacity='0'">
+          </div>
+          <div class="back" onclick="handleTap(event, 'prev')">
+            <img src="${folderPath}${backNum}${extension}" loading="eager" decoding="sync" onerror="this.style.opacity='0'">
+          </div>
+        `;
+        book.appendChild(page);
+      }
     }
 
     function handleTap(e, direction) {
-        if (wasDragged) return;
-        if (direction === 'next') goNextPage();
-        else goPrevPage();
+      if (wasDragged) return;
+      if (direction === "next") goNextPage();
+      else goPrevPage();
     }
 
     function goNextPage() {
-        if (currentState < maxState) {
-            const paper = document.getElementById(`p${currentState}`);
-            if (currentState === 1) book.style.transform = "translateX(50%)";
-            paper.classList.add("flipped");
-            paper.style.zIndex = currentState;
-            if (currentState === numOfPapers) book.style.transform = "translateX(100%)";
-            currentState++;
-        }
+      if (currentState < maxState) {
+        const paper = document.getElementById(`p${currentState}`);
+        if (currentState === 1) book.style.transform = "translate3d(50%,0,0)";
+        paper.classList.add("flipped");
+        paper.style.zIndex = currentState;
+        if (currentState === numOfPapers) book.style.transform = "translate3d(100%,0,0)";
+        currentState++;
+      }
     }
 
     function goPrevPage() {
-        if (currentState > 1) {
-            currentState--;
-            const paper = document.getElementById(`p${currentState}`);
-            if (currentState === 1) book.style.transform = "translateX(0%)";
-            else if (currentState === numOfPapers) book.style.transform = "translateX(50%)";
-            paper.classList.remove("flipped");
-            paper.style.zIndex = numOfPapers - currentState + 1;
-        }
+      if (currentState > 1) {
+        currentState--;
+        const paper = document.getElementById(`p${currentState}`);
+        if (currentState === 1) book.style.transform = "translate3d(0%,0,0)";
+        else if (currentState === numOfPapers) book.style.transform = "translate3d(50%,0,0)";
+        paper.classList.remove("flipped");
+        paper.style.zIndex = numOfPapers - currentState + 1;
+      }
     }
 
     init();
-</script>
-
+  </script>
 </body>
 </html>
