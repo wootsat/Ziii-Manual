@@ -8,6 +8,8 @@
         :root {
             --book-width: 98vmin; 
             --speed: 0.6s;
+			/* Default zoom level */
+            --zoom-level: 1;
         }
 
         body {
@@ -21,6 +23,14 @@
             font-family: sans-serif;
         }
 
+		/* The zoom layer handles the scaling */
+        #zoom-container {
+            transition: transform 0.1s ease-out;
+            transform: scale(var(--zoom-level));
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
         .book {
             position: relative;
             width: calc(var(--book-width) / 2);
@@ -67,14 +77,25 @@
             pointer-events: none;
         }
 
-        .flipped {
-            transform: rotateY(-180deg);
+        .flipped { transform: rotateY(-180deg); }
+
+        #zoom-info {
+            position: fixed;
+            top: 10px;
+            left: 10px;
+            color: #444;
+            font-size: 12px;
+            pointer-events: none;
         }
     </style>
 </head>
 <body>
 
-    <div class="book" id="book"></div>
+    <div id="zoom-info">Scroll to Zoom</div>
+
+    <div id="zoom-container">
+        <div class="book" id="book"></div>
+    </div>
 
 <script>
     // --- CONFIGURATION ---
@@ -84,10 +105,28 @@
     const extension = ".jpg"; 
 
     const book = document.getElementById('book');
+    const zoomContainer = document.getElementById('zoom-container');
     let currentState = 1;
+    let zoomScale = 1;
     const numOfPapers = Math.ceil(totalImages / 2);
     const maxState = numOfPapers + 1;
 
+// 1. SCROLL TO ZOOM LOGIC
+    window.addEventListener('wheel', (e) => {
+        // e.deltaY is positive when scrolling down, negative when scrolling up
+        if (e.deltaY < 0) {
+            zoomScale += 0.05; // Zoom In
+        } else {
+            zoomScale -= 0.05; // Zoom Out
+        }
+
+        // Limit the zoom so the book doesn't disappear or get too massive
+        zoomScale = Math.min(Math.max(0.2, zoomScale), 3);
+        
+        document.documentElement.style.setProperty('--zoom-level', zoomScale);
+    }, { passive: true });
+
+    // 2. INITIALIZE PAGES
     function init() {
         for (let i = 1; i <= numOfPapers; i++) {
             const page = document.createElement('div');
@@ -113,6 +152,7 @@
         }
     }
 
+	// 3. NAVIGATION
     function goNextPage() {
         if (currentState < maxState) {
             const paper = document.getElementById(`p${currentState}`);
