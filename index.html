@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Ziii Manual</title>
   <style>
-    :root { --book-width: 90vmin; --speed: 280ms; } /* total flip time (both halves) */
+    :root { --book-width: 90vmin; --speed: 220ms; } /* total flip time */
 
     html, body {
       width: 100%;
@@ -87,7 +87,7 @@
       background: rgba(255,255,255,0.06);
       z-index: 30;
       pointer-events:none;
-      opacity: 0.0; /* set to 0.06 if you want a faint spine */
+      opacity: 0.0;
     }
 
     .flipOverlay{
@@ -174,8 +174,7 @@
     const extension = ".jpg";
 
     const TOTAL_SPEED = parseInt(getComputedStyle(document.documentElement).getPropertyValue("--speed")) || 280;
-    const HALF_SPEED = Math.max(60, Math.floor(TOTAL_SPEED / 2)); // each half duration
-
+    const HALF_SPEED = Math.max(60, Math.floor(TOTAL_SPEED / 2));
     const maxSpread = Math.ceil((totalImages + 1) / 2) - 1;
 
     const frame = document.getElementById("frame");
@@ -268,13 +267,42 @@
       setBg(rightImg, srcFor(right));
     }
 
-    // ---- Sequential animation (no simultaneous halves) ----
+    // ---- PRELOAD/DECODE CACHE (fixes "black until loaded" on first flip) ----
+    const preloadCache = new Map(); // url -> Promise
+
+    function preloadAndDecode(url) {
+      if (!url) return Promise.resolve();
+      if (preloadCache.has(url)) return preloadCache.get(url);
+
+      const p = new Promise((resolve) => {
+        const img = new Image();
+        // same-origin on GitHub Pages; no crossOrigin needed unless you later draw to canvas
+        img.onload = async () => {
+          // decode() prevents the "loaded but not decoded yet" black flash
+          if (img.decode) {
+            try { await img.decode(); } catch (_) {}
+          }
+          resolve();
+        };
+        img.onerror = () => resolve(); // fail soft; still allow flipping
+        img.src = url;
+      });
+
+      preloadCache.set(url, p);
+      return p;
+    }
+
+    // Preload a few upcoming pages so first interaction is smooth
+    function warmStart() {
+      const urls = [];
+      for (let i = 0; i < Math.min(totalImages, 8); i++) urls.push(srcFor(i));
+      urls.forEach(u => preloadAndDecode(u));
+    }
+
+    // ---- Sequential flip ----
     let spreadIndex = 0;
     let animating = false;
 
-    // Easing chosen to avoid a “stop” at the spine:
-    // - phase A ends fast (ease-in)
-    // - phase B starts fast (ease-out)
     function easeInQuad(t){ return t * t; }
     function easeOutQuad(t){ return 1 - (1 - t) * (1 - t); }
 
@@ -314,7 +342,6 @@
           const sx = fromSX + (toSX - fromSX) * t;
           overlayEl.style.transform = `translate3d(0,0,0) scaleX(${sx})`;
 
-          // fold01: 0 open, 1 folded
           const folding = fromSX > toSX;
           const fold01 = folding ? t : (1 - t);
           setCurlFX(fold01, shadowEl, hiEl, dirForFX);
@@ -342,29 +369,37 @@
       const nextLeftUrl  = srcFor(nextPair.left);
       const nextRightUrl = srcFor(nextPair.right);
 
-      // Underlay setup:
-      // - right should already be the new right page after fold reaches the spine
-      // - left stays the old left page during phase B (it gets covered)
+      // CRITICAL: ensure Phase-B image is decoded before we need it
+      await Promise.all([
+        preloadAndDecode(nextLeftUrl),
+        preloadAndDecode(nextRightUrl)
+      ]);
+
+      // Underlay setup
       setBg(leftImg, currLeftUrl);
       setBg(rightImg, nextRightUrl);
 
-      // Phase A: fold current RIGHT page into spine (1 -> 0)
+      // Phase A: fold current RIGHT page into spine
       setOverlay(flipRight, "right", "left center", flipRightImg, currRightUrl, 1);
       flipRight.style.zIndex = "70";
       await animateHalf(flipRight, 1, 0, "next", fxRightShadow, fxRightHi, easeInQuad);
 
-      // Phase B: unfold new LEFT page from spine (0 -> 1)
+      // Phase B: unfold new LEFT page from spine
       setOverlay(flipLeft, "left", "right center", flipLeftImg, nextLeftUrl, 0);
       flipLeft.style.zIndex = "71";
       await animateHalf(flipLeft, 0, 1, "prev", fxLeftShadow, fxLeftHi, easeOutQuad);
 
-      // Commit final spread
       spreadIndex = nextIdx;
       renderSpread(spreadIndex);
 
       resetOverlay(flipRight, fxRightShadow, fxRightHi);
       resetOverlay(flipLeft,  fxLeftShadow,  fxLeftHi);
       animating = false;
+
+      // Opportunistic preload of the next spread
+      const ahead = spreadToIndices(Math.min(maxSpread, spreadIndex + 1));
+      preloadAndDecode(srcFor(ahead.left));
+      preloadAndDecode(srcFor(ahead.right));
     }
 
     async function prev(){
@@ -383,29 +418,37 @@
       const prevLeftUrl  = srcFor(prevPair.left);
       const prevRightUrl = srcFor(prevPair.right);
 
-      // Underlay setup:
-      // - left should already be the new left page after fold reaches the spine
-      // - right stays the old right page during phase B (it gets covered)
+      // CRITICAL: ensure Phase-B image is decoded before we need it
+      await Promise.all([
+        preloadAndDecode(prevRightUrl),
+        preloadAndDecode(prevLeftUrl)
+      ]);
+
+      // Underlay setup
       setBg(leftImg, prevLeftUrl);
       setBg(rightImg, currRightUrl);
 
-      // Phase A: fold current LEFT page into spine (1 -> 0)
+      // Phase A: fold current LEFT page into spine
       setOverlay(flipLeft, "left", "right center", flipLeftImg, currLeftUrl, 1);
       flipLeft.style.zIndex = "70";
       await animateHalf(flipLeft, 1, 0, "prev", fxLeftShadow, fxLeftHi, easeInQuad);
 
-      // Phase B: unfold previous RIGHT page from spine (0 -> 1)
+      // Phase B: unfold previous RIGHT page from spine
       setOverlay(flipRight, "right", "left center", flipRightImg, prevRightUrl, 0);
       flipRight.style.zIndex = "71";
       await animateHalf(flipRight, 0, 1, "next", fxRightShadow, fxRightHi, easeOutQuad);
 
-      // Commit final spread
       spreadIndex = prevIdx;
       renderSpread(spreadIndex);
 
       resetOverlay(flipLeft,  fxLeftShadow,  fxLeftHi);
       resetOverlay(flipRight, fxRightShadow, fxRightHi);
       animating = false;
+
+      // Opportunistic preload (behind)
+      const behind = spreadToIndices(Math.max(0, spreadIndex - 1));
+      preloadAndDecode(srcFor(behind.left));
+      preloadAndDecode(srcFor(behind.right));
     }
 
     hit.addEventListener("click", (e) => {
@@ -423,6 +466,7 @@
     updateTransform();
     resetOverlay(flipRight, fxRightShadow, fxRightHi);
     resetOverlay(flipLeft,  fxLeftShadow,  fxLeftHi);
+    warmStart();
   </script>
 </body>
 </html>
