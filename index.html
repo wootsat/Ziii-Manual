@@ -3,7 +3,7 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Ziii Manual - Sharper Pages</title>
+  <title>Ziii Manual - Sharper Pages + Click Threshold</title>
   <style>
     :root {
       --book-width: 90vmin;
@@ -37,7 +37,6 @@
       justify-content: center;
       align-items: center;
 
-      /* Helps keep transforms on the GPU consistently */
       transform: translateZ(0);
       backface-visibility: hidden;
     }
@@ -49,11 +48,7 @@
       height: calc(var(--book-width) * 0.7);
       transition: transform var(--speed);
       transform-style: preserve-3d;
-
-      /* A slightly higher perspective can reduce distortion blur */
       perspective: 5000px;
-
-      /* Prevent text/edges from looking “washed” on some GPUs */
       backface-visibility: hidden;
       transform: translateZ(0);
       will-change: transform;
@@ -67,7 +62,6 @@
       transition: transform var(--speed);
       cursor: pointer;
 
-      /* Important: keep each page on its own composited layer */
       will-change: transform;
       transform: translateZ(0);
       backface-visibility: hidden;
@@ -81,32 +75,26 @@
       display: flex;
       justify-content: center;
       align-items: center;
-
-      /* Keep faces crisp while rotating */
       transform: translateZ(0);
     }
 
     .back { transform: rotateY(180deg) translateZ(0); }
 
-    /* The most important “sharpness” knobs */
     img {
       width: 100%;
       height: 100%;
       object-fit: contain;
       pointer-events: none;
 
-      /* Prefer high quality scaling */
       image-rendering: auto;
       image-rendering: smooth;
       image-rendering: high-quality;
       -ms-interpolation-mode: bicubic;
 
-      /* Helps some browsers render crisper during transforms */
       transform: translateZ(0);
       backface-visibility: hidden;
       will-change: transform;
 
-      /* Prevent accidental antialiasing shimmer from tiny subpixel shifts */
       -webkit-transform-style: preserve-3d;
       transform-style: preserve-3d;
     }
@@ -141,13 +129,18 @@
     const book = document.getElementById("book");
     const dragWrapper = document.getElementById("drag-wrapper");
 
+    // --- Drag vs Click threshold (fix for tiny mouse movement) ---
+    const DRAG_THRESHOLD = 6; // pixels (raise/lower to taste)
+
+    // Initial state
     let scale = 1;
     let pos = { x: 0, y: 0 };
     let isDragging = false;
     let wasDragged = false;
     let startMouse = { x: 0, y: 0 };
+    let dragStart = { x: 0, y: 0 };
 
-    // Zoom to cursor
+    // --- 1) ZOOM TO CURSOR ---
     window.addEventListener(
       "wheel",
       (e) => {
@@ -168,34 +161,47 @@
       { passive: false }
     );
 
-    // Dragging
+    // --- 2) DRAGGING WITH THRESHOLD ---
     window.addEventListener("mousedown", (e) => {
       isDragging = true;
       wasDragged = false;
+
+      dragStart = { x: e.clientX, y: e.clientY };
       startMouse = { x: e.clientX - pos.x, y: e.clientY - pos.y };
     });
 
     window.addEventListener("mousemove", (e) => {
       if (!isDragging) return;
-      wasDragged = true;
-      pos.x = e.clientX - startMouse.x;
-      pos.y = e.clientY - startMouse.y;
-      updateTransform();
+
+      const dx = e.clientX - dragStart.x;
+      const dy = e.clientY - dragStart.y;
+
+      // Only count as dragging after a small threshold
+      if (!wasDragged && Math.hypot(dx, dy) > DRAG_THRESHOLD) {
+        wasDragged = true;
+      }
+
+      // Only move the book once we've exceeded the threshold
+      if (wasDragged) {
+        pos.x = e.clientX - startMouse.x;
+        pos.y = e.clientY - startMouse.y;
+        updateTransform();
+      }
     });
 
     window.addEventListener("mouseup", () => {
       isDragging = false;
+      // Small delay to prevent click/flip when releasing a real drag
       setTimeout(() => {
         wasDragged = false;
       }, 50);
     });
 
     function updateTransform() {
-      // translate3d helps keep it on the GPU consistently and reduces “re-raster” blur
       dragWrapper.style.transform = `translate3d(${pos.x}px, ${pos.y}px, 0) scale(${scale})`;
     }
 
-    // Page init
+    // --- 3) PAGE INITIALIZATION ---
     const numOfPapers = Math.ceil(totalImages / 2);
     let currentState = 1;
     const maxState = numOfPapers + 1;
@@ -223,7 +229,9 @@
     }
 
     function handleTap(e, direction) {
+      // Allow small mouse jitter: only block if it was a REAL drag
       if (wasDragged) return;
+
       if (direction === "next") goNextPage();
       else goPrevPage();
     }
