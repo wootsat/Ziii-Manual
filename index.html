@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <title>Ziii Manual</title>
   <style>
-    :root { --book-width: 90vmin; --speed: 220ms; } /* total flip time */
+    :root { --book-width: 90vmin; --speed: 280ms; } /* total flip time */
 
     html, body {
       width: 100%;
@@ -15,8 +15,7 @@
       overflow: hidden;
       font-family: sans-serif;
       user-select: none;
-      /* Important: we will handle pan/zoom ourselves */
-      touch-action: none;
+      touch-action: none; /* we handle pan/zoom */
     }
 
     #zoom-info{
@@ -90,7 +89,7 @@
       background: rgba(255,255,255,0.06);
       z-index: 30;
       pointer-events:none;
-      opacity: 0.0;
+      opacity: 0.0; /* set to 0.06 if you want a faint spine */
     }
 
     .flipOverlay{
@@ -127,20 +126,19 @@
         rgba(255,255,255,0.0));
     }
 
-    /* Click/tap capture. Keep it, but allow our custom gestures everywhere */
     .hit{
       position:absolute;
       inset:0;
       z-index: 100;
       pointer-events:auto;
       background: transparent;
-      touch-action: none; /* crucial */
+      touch-action: none; /* allow our custom pinch anywhere */
     }
   </style>
 </head>
 
 <body>
-  <div id="zoom-info">Pinch: Zoom | 1-finger drag: Move | Tap Right: Next | Tap Left: Prev</div>
+  <div id="zoom-info">Pinch: Zoom | 1-finger drag: Move | Wheel: Zoom | Tap Right: Next | Tap Left: Prev</div>
 
   <div id="viewport">
     <div id="drag-wrapper">
@@ -174,6 +172,7 @@
   </div>
 
   <script>
+    // ---------------- CONFIG ----------------
     const totalImages = 58;
     const folderPath = "images/";
     const extension = ".jpg";
@@ -182,6 +181,7 @@
     const HALF_SPEED = Math.max(60, Math.floor(TOTAL_SPEED / 2));
     const maxSpread = Math.ceil((totalImages + 1) / 2) - 1;
 
+    // ---------------- ELEMENTS ----------------
     const frame = document.getElementById("frame");
     const dragWrapper = document.getElementById("drag-wrapper");
 
@@ -200,125 +200,155 @@
 
     const hit = document.getElementById("hit");
 
-    // ---------------- PAN + ZOOM (mouse + touch pinch) ----------------
+    // ---------------- PAN + ZOOM (stable pinch) ----------------
     const DRAG_THRESHOLD = 6;
 
     let scale = 1;
     let pos = { x: 0, y: 0 };
 
-    // Pointer tracking (works for touch + pen)
-    const pointers = new Map(); // id -> {x,y, startX,startY}
-    let isPanning = false;
-    let wasDragged = false;
+    // Smoothed targets (what the gesture wants)
+    let targetScale = 1;
+    let targetPos = { x: 0, y: 0 };
 
-    // Pinch state
+    // Animation smoothing strength (bigger = snappier)
+    const SMOOTH = 0.22;
+
+    // Pointer tracking
+    const pointers = new Map(); // id -> {x,y, startX,startY}
+    let wasDragged = false;
     let pinching = false;
-    let pinchStartDist = 0;
+
+    // Pinch reference state
     let pinchStartScale = 1;
     let pinchStartPos = { x: 0, y: 0 };
-    let pinchStartMid = { x: 0, y: 0 };
+    let pinchStartDist = 1;
 
-    function updateTransform() {
-      dragWrapper.style.transform = `translate3d(${pos.x}px, ${pos.y}px, 0) scale(${scale})`;
-    }
+    // Extra pinch smoothing
+    let filtMid = null;   // {x,y}
+    let filtDist = null;  // number
+    const PINCH_FILTER = 0.35; // higher = more smoothing
 
     function clamp(v, min, max) { return Math.min(max, Math.max(min, v)); }
 
-    function getMidAndDist(p1, p2) {
-      const midX = (p1.x + p2.x) / 2;
-      const midY = (p1.y + p2.y) / 2;
-      const dx = p2.x - p1.x;
-      const dy = p2.y - p1.y;
-      const dist = Math.hypot(dx, dy);
-      return { midX, midY, dist };
+    function applyTransform() {
+      dragWrapper.style.transform = `translate3d(${pos.x}px, ${pos.y}px, 0) scale(${scale})`;
     }
 
-    // Convert screen point to "world" anchor approach (zoom to point)
-    function zoomToPoint(newScale, clientX, clientY) {
+    // Single RAF loop applies smoothing
+    let rafRunning = false;
+    function requestTick() {
+      if (!rafRunning) {
+        rafRunning = true;
+        requestAnimationFrame(tick);
+      }
+    }
+
+    function tick() {
+      rafRunning = false;
+
+      scale += (targetScale - scale) * SMOOTH;
+      pos.x += (targetPos.x - pos.x) * SMOOTH;
+      pos.y += (targetPos.y - pos.y) * SMOOTH;
+
+      if (Math.abs(targetScale - scale) < 0.0005) scale = targetScale;
+      if (Math.abs(targetPos.x - pos.x) < 0.05) pos.x = targetPos.x;
+      if (Math.abs(targetPos.y - pos.y) < 0.05) pos.y = targetPos.y;
+
+      applyTransform();
+
+      if (Math.abs(targetScale - scale) > 0.0005 || Math.abs(targetPos.x - pos.x) > 0.05 || Math.abs(targetPos.y - pos.y) > 0.05) {
+        requestTick();
+      }
+    }
+
+    function setTargetTransform(newScale, newX, newY) {
+      targetScale = clamp(newScale, 0.1, 6);
+      targetPos.x = newX;
+      targetPos.y = newY;
+      requestTick();
+    }
+
+    function zoomToPointTarget(newScale, clientX, clientY, baseScale = targetScale, basePos = targetPos) {
       newScale = clamp(newScale, 0.1, 6);
 
-      // point relative to screen center
       const px = clientX - window.innerWidth / 2;
       const py = clientY - window.innerHeight / 2;
 
-      // Keep the point under the fingers stable
-      pos.x = px - (px - pos.x) * (newScale / scale);
-      pos.y = py - (py - pos.y) * (newScale / scale);
+      const newX = px - (px - basePos.x) * (newScale / baseScale);
+      const newY = py - (py - basePos.y) * (newScale / baseScale);
 
-      scale = newScale;
-      updateTransform();
+      setTargetTransform(newScale, newX, newY);
     }
 
-    // Desktop wheel zoom (still useful)
+    function getMidAndDist(a, b) {
+      const midX = (a.x + b.x) / 2;
+      const midY = (a.y + b.y) / 2;
+      const dx = b.x - a.x;
+      const dy = b.y - a.y;
+      return { midX, midY, dist: Math.hypot(dx, dy) || 1 };
+    }
+
+    // Wheel zoom (ignore while touching)
     window.addEventListener("wheel", (e) => {
+      if (pointers.size > 0) return;
       e.preventDefault();
       const delta = e.deltaY > 0 ? 0.9 : 1.1;
-      zoomToPoint(scale * delta, e.clientX, e.clientY);
+      zoomToPointTarget(targetScale * delta, e.clientX, e.clientY, targetScale, targetPos);
     }, { passive: false });
 
-    // Pointer events for pan + pinch everywhere (including on the book)
+    // Pointer gestures for pan + pinch anywhere
     window.addEventListener("pointerdown", (e) => {
-      // capture so moves continue even if finger leaves element
       try { e.target.setPointerCapture(e.pointerId); } catch (_) {}
-
       pointers.set(e.pointerId, { x: e.clientX, y: e.clientY, startX: e.clientX, startY: e.clientY });
       wasDragged = false;
 
-      if (pointers.size === 1) {
-        isPanning = true;
-        pinching = false;
-      } else if (pointers.size === 2) {
-        // Start pinch
+      if (pointers.size === 2) {
         pinching = true;
-        isPanning = false;
 
         const pts = Array.from(pointers.values());
         const { midX, midY, dist } = getMidAndDist(pts[0], pts[1]);
 
-        pinchStartDist = dist || 1;
-        pinchStartScale = scale;
-        pinchStartPos = { ...pos };
-        pinchStartMid = { x: midX, y: midY };
+        pinchStartScale = targetScale;
+        pinchStartPos = { x: targetPos.x, y: targetPos.y };
+        pinchStartDist = dist;
 
-        // Also set up the "zoom to midpoint" anchor
-        // (we'll use zoomToPoint-like logic but based on start state)
+        filtMid = { x: midX, y: midY };
+        filtDist = dist;
       }
     }, { passive: false });
 
     window.addEventListener("pointermove", (e) => {
-      if (!pointers.has(e.pointerId)) return;
-
-      // update pointer
       const p = pointers.get(e.pointerId);
+      if (!p) return;
+
       p.x = e.clientX;
       p.y = e.clientY;
 
       if (pointers.size === 2) {
-        // pinch zoom
         pinching = true;
-        isPanning = false;
 
         const pts = Array.from(pointers.values());
-        const { midX, midY, dist } = getMidAndDist(pts[0], pts[1]);
+        const raw = getMidAndDist(pts[0], pts[1]);
 
-        const ratio = (dist || 1) / pinchStartDist;
+        if (!filtMid) filtMid = { x: raw.midX, y: raw.midY };
+        if (!filtDist) filtDist = raw.dist;
+
+        // low-pass filter
+        filtMid.x += (raw.midX - filtMid.x) * (1 - PINCH_FILTER);
+        filtMid.y += (raw.midY - filtMid.y) * (1 - PINCH_FILTER);
+        filtDist  += (raw.dist - filtDist)  * (1 - PINCH_FILTER);
+
+        const ratio = (filtDist || 1) / (pinchStartDist || 1);
         const newScale = clamp(pinchStartScale * ratio, 0.1, 6);
 
-        // Apply "zoom to midpoint" but using start pos/scale to avoid drift
-        const px = midX - window.innerWidth / 2;
-        const py = midY - window.innerHeight / 2;
-
-        pos.x = px - (px - pinchStartPos.x) * (newScale / pinchStartScale);
-        pos.y = py - (py - pinchStartPos.y) * (newScale / pinchStartScale);
-
-        scale = newScale;
-        updateTransform();
+        zoomToPointTarget(newScale, filtMid.x, filtMid.y, pinchStartScale, pinchStartPos);
 
         e.preventDefault();
         return;
       }
 
-      if (pointers.size === 1 && isPanning && !pinching) {
+      // 1-finger pan
+      if (pointers.size === 1 && !pinching) {
         const only = Array.from(pointers.values())[0];
         const dx = only.x - only.startX;
         const dy = only.y - only.startY;
@@ -326,39 +356,26 @@
         if (!wasDragged && Math.hypot(dx, dy) > DRAG_THRESHOLD) wasDragged = true;
 
         if (wasDragged) {
-          pos.x += (e.movementX || 0);
-          pos.y += (e.movementY || 0);
+          const prev = p._prev || { x: only.x, y: only.y };
+          const ddx = only.x - prev.x;
+          const ddy = only.y - prev.y;
+          p._prev = { x: only.x, y: only.y };
 
-          // movementX/movementY can be 0 on some mobile browsers; fallback:
-          if (!e.movementX && !e.movementY) {
-            // use delta from last stored position
-            const prev = pointers.get(e.pointerId)._prev || { x: only.x, y: only.y };
-            pos.x += (only.x - prev.x);
-            pos.y += (only.y - prev.y);
-          }
-
-          pointers.get(e.pointerId)._prev = { x: only.x, y: only.y };
-          updateTransform();
+          setTargetTransform(targetScale, targetPos.x + ddx, targetPos.y + ddy);
+          e.preventDefault();
         }
-
-        e.preventDefault();
       }
     }, { passive: false });
 
     window.addEventListener("pointerup", (e) => {
       pointers.delete(e.pointerId);
-
       if (pointers.size < 2) pinching = false;
-      if (pointers.size === 0) {
-        isPanning = false;
-        setTimeout(() => { wasDragged = false; }, 50);
-      }
+      if (pointers.size === 0) setTimeout(() => { wasDragged = false; }, 50);
     }, { passive: false });
 
     window.addEventListener("pointercancel", (e) => {
       pointers.delete(e.pointerId);
       if (pointers.size < 2) pinching = false;
-      if (pointers.size === 0) isPanning = false;
     }, { passive: false });
 
     // ---------------- IMAGES ----------------
@@ -380,7 +397,7 @@
       setBg(rightImg, srcFor(right));
     }
 
-    // ---- PRELOAD/DECODE CACHE (prevents black on first load) ----
+    // ---- PRELOAD/DECODE CACHE (prevents black on first flip) ----
     const preloadCache = new Map();
     function preloadAndDecode(url) {
       if (!url) return Promise.resolve();
@@ -441,7 +458,7 @@
     function animateHalf(overlayEl, fromSX, toSX, dirForFX, shadowEl, hiEl, easingFn){
       return new Promise((resolve) => {
         const start = performance.now();
-        function tick(now){
+        function tickAnim(now){
           const raw = Math.min(1, (now - start) / HALF_SPEED);
           const t = easingFn(raw);
           const sx = fromSX + (toSX - fromSX) * t;
@@ -451,10 +468,10 @@
           const fold01 = folding ? t : (1 - t);
           setCurlFX(fold01, shadowEl, hiEl, dirForFX);
 
-          if (raw < 1) requestAnimationFrame(tick);
+          if (raw < 1) requestAnimationFrame(tickAnim);
           else resolve();
         }
-        requestAnimationFrame(tick);
+        requestAnimationFrame(tickAnim);
       });
     }
 
@@ -548,7 +565,7 @@
       preloadAndDecode(srcFor(behind.right));
     }
 
-    // Tap to flip (ignore if user dragged/pinched)
+    // Tap to flip (ignore if dragged/pinched)
     hit.addEventListener("click", (e) => {
       if (wasDragged || pinching) return;
       if (animating) return;
@@ -559,9 +576,11 @@
       else prev();
     });
 
-    // Init
+    // ---------------- INIT ----------------
     renderSpread(spreadIndex);
-    updateTransform();
+    targetScale = scale;
+    targetPos = { ...pos };
+    applyTransform();
     resetOverlay(flipRight, fxRightShadow, fxRightHi);
     resetOverlay(flipLeft,  fxLeftShadow,  fxLeftHi);
     warmStart();
